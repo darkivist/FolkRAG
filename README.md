@@ -6,7 +6,7 @@ This project is a Retrieval-Augmented Generation (RAG) system designed for resea
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/jschild01/Capstone.git
+   git clone https://github.com/darkivist/FolkRAG.git
    ```
 2. Install required dependencies:
     ```bash
