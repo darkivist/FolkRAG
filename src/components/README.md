@@ -1,5 +1,5 @@
 # Components
-Main components for this RAG system consist of the `retriever.py` and `generator.py`. 
+Main components for this RAG system consist of the `retriever.py` and `generator.py`, and `create_vectorstore.py`. 
 - [Usage](#usage)
 - [Retriever Details](#retriever-details)
 - [Generator Details](#generator-details)
@@ -63,6 +63,27 @@ Instructions:
 
 Your Answer here:
 ```
+# Create Vector Store Details
+### Required Data Structure
+Your data directory must follow this structure:
+
+```
+data/
+├── txt/              # Plain text documents
+├── transcripts/      # Text transcriptions
+├── pdf/
+│   └── txtConversion/  # OCR-converted PDF text
+└── loc_dot_gov_data/   # Metadata directory
+    └── {collection_name}/
+        ├── file_list.csv
+        └── search_results.csv
+```
+
+### Important Notes
+* All text files must be UTF-8 encoded
+* File names should follow AFC identifier pattern (e.g., afc2021007_002_ms01.txt)
+* Transcripts should be named as {original_name}_en.txt or {original_name}_en_translation.txt
+* Each collection needs file_list.csv and search_results.csv with proper metadata
 
 # License
 This project is licensed under the MIT License. See the LICENSE file in the root directory for more information.
