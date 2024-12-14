@@ -255,12 +255,35 @@ class RAGRetriever:
             print(f"Error during vectorstore initialization: {e}")
             raise
 
+    def preprocess_metadata(self, metadata: Dict[str, Dict]) -> Dict[str, Dict]:
+        """Preprocess metadata by stripping extensions from keys."""
+        return {key.split('.')[0]: value for key, value in metadata.items()}
+
     def load_data(self, data_dir: str, metadata: Dict[str, Dict]) -> List[Document]:
-        """Load all documents from the data directory, with or without metadata."""
-        print("\nStarting document loading...")
-        print(f"Number of metadata entries: {len(metadata)}")
-        if metadata:
-            print("Sample metadata keys:", list(next(iter(metadata.values())).keys()))
+        """Load all documents with simplified metadata matching"""
+        # Preprocess metadata once at the start
+        self.metadata = self.preprocess_metadata(metadata)
+
+        # Set up logging
+        log_dir = 'logs'
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f'metadata_matching_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt')
+
+        def log_print(message):
+            print(message)
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(message + '\n')
+
+        def get_base_filename(filename):
+            # Strip all extensions - everything after the first period
+            return filename.split('.')[0]
+
+        log_print("\n=== Metadata Matching Analysis ===")
+        log_print(f"Total metadata entries: {len(self.metadata)}")
+        log_print("\nSample metadata keys (first 10):")
+        sample_keys = list(self.metadata.keys())[:10]
+        for key in sample_keys:
+            log_print(f"- {key}")
 
         self.documents = []
         txt_dir = os.path.join(data_dir, 'txt')
@@ -270,47 +293,101 @@ class RAGRetriever:
         docs_with_metadata = 0
         docs_without_metadata = 0
 
+        total_files = 0
         for directory in [txt_dir, transcripts_dir, ocr_dir]:
             if not os.path.exists(directory):
-                print(f"Directory not found: {directory}")
+                continue
+            total_files += len([f for f in os.listdir(directory) if f.endswith('.txt')])
+
+        log_print(f"\nTotal files to process: {total_files}")
+
+        for directory in [txt_dir, transcripts_dir, ocr_dir]:
+            if not os.path.exists(directory):
+                log_print(f"\nDirectory not found: {directory}")
                 continue
 
-            print(f"\nProcessing directory: {directory}")
+            dir_type = 'transcript' if 'transcripts' in directory else 'ocr' if 'txtConversion' in directory else 'txt'
+            log_print(f"\nProcessing directory: {directory}")
+            log_print(f"Directory type: {dir_type}")
+
             for filename in os.listdir(directory):
                 if not filename.endswith('.txt'):
                     continue
 
                 file_path = os.path.join(directory, filename)
+                log_print(f"\nProcessing: {filename}")
+                log_print(f"Directory type: {dir_type}")
 
-                # Handle different file types
-                if directory == transcripts_dir:
-                    if '_en' not in filename:
-                        print(f"Skipping non-English transcript: {filename}")
-                        continue
-                    base_filename = re.sub(r'_(en|en_translation)\.txt$', '', filename)
-                    base_filename = f"{base_filename}.mp3"
-                    file_type = 'transcript'
-                elif directory == ocr_dir:
-                    base_filename = re.sub(r'\.txt$', '.pdf', filename)
-                    file_type = 'pdf_ocr'
-                else:  # txt_dir
-                    base_filename = filename
-                    file_type = 'text'
+                # Get base filename without any extensions
+                base_filename = get_base_filename(filename)
+                log_print(f"Base filename: {base_filename}")
+
+                # Set file type based on directory
+                file_type = dir_type
 
                 try:
                     with open(file_path, 'r', encoding='utf-8') as file:
                         content = file.read()
 
-                    if base_filename in metadata:
-                        doc_metadata = metadata[base_filename].copy()
-                        doc_metadata['original_filename'] = filename
-                        doc_metadata['file_type'] = file_type
-                        doc_metadata['metadata_status'] = 'complete'
-                        doc_metadata = {k: str(v) if v is not None and v != '' else 'N/A'
-                                        for k, v in doc_metadata.items()}
+                    # Check if metadata exists using base filename
+                    metadata_exists = base_filename in self.metadata
+                    log_print(f"Metadata match found: {metadata_exists}")
+
+                    if metadata_exists:
+                        log_print("Creating document with complete metadata")
+                        metadata_entry = self.metadata[base_filename]
+                        log_print("Metadata content:")
+                        log_print(json.dumps(metadata_entry, indent=2))
+
+                        doc_metadata = {
+                            'original_filename': filename,
+                            'base_filename': base_filename,
+                            'file_type': file_type,
+                            'source_directory': os.path.basename(directory),
+                            'metadata_status': 'complete',
+                            'title': metadata_entry.get('title', 'N/A'),
+                            'date': metadata_entry.get('date', 'N/A'),
+                            'contributors': metadata_entry.get('contributors', 'N/A'),
+                            'creator': metadata_entry.get('creator', 'N/A'),
+                            'description': metadata_entry.get('description', ''),
+                            'subjects': metadata_entry.get('subjects', ''),
+                            'call_number': metadata_entry.get('call_number', ''),
+                            'collection': metadata_entry.get('collection', ''),
+                            'repository': metadata_entry.get('repository', ''),
+                            'rights': metadata_entry.get('rights', ''),
+                            'language': metadata_entry.get('language', ''),
+                            'type': metadata_entry.get('type', ''),
+                            'original_format': metadata_entry.get('original_format', ''),
+                            'online_formats': metadata_entry.get('online_formats', ''),
+                            'access_restricted': metadata_entry.get('access_restricted', ''),
+                            'url': metadata_entry.get('url', ''),
+                            'collection_title': metadata_entry.get('collection_title', ''),
+                            'collection_date': metadata_entry.get('collection_date', ''),
+                            'collection_abstract': metadata_entry.get('collection_abstract', ''),
+                            'source_collection': metadata_entry.get('source_collection', ''),
+                            'catalog_title': metadata_entry.get('catalog_title', ''),
+                            'catalog_creator': metadata_entry.get('catalog_creator', ''),
+                            'catalog_date': metadata_entry.get('catalog_date', ''),
+                            'catalog_description': metadata_entry.get('catalog_description', ''),
+                            'catalog_subjects': metadata_entry.get('catalog_subjects', ''),
+                            'catalog_contributors': metadata_entry.get('catalog_contributors', ''),
+                            'catalog_notes': metadata_entry.get('catalog_notes', ''),
+                            'catalog_language': metadata_entry.get('catalog_language', ''),
+                            'catalog_genre': metadata_entry.get('catalog_genre', ''),
+                            'catalog_repository': metadata_entry.get('catalog_repository', ''),
+                            'catalog_collection_id': metadata_entry.get('catalog_collection_id', '')
+                        }
                         docs_with_metadata += 1
+
                     else:
-                        print(f"No metadata found for {base_filename}")
+                        log_print("No metadata match found, checking similar keys:")
+                        # Log similar keys for debugging
+                        similar_keys = [k for k in self.metadata.keys() if base_filename.lower() in k.lower()]
+                        if similar_keys:
+                            log_print("Found similar keys:")
+                            for key in similar_keys:
+                                log_print(f"  - {key}")
+
                         doc_metadata = {
                             'original_filename': filename,
                             'base_filename': base_filename,
@@ -327,17 +404,23 @@ class RAGRetriever:
                     self.documents.append(doc)
 
                 except Exception as e:
-                    print(f"Error processing file {filename}: {e}")
+                    log_print(f"Error processing file {filename}: {e}")
 
-        print(f"\nLoading complete:")
-        print(f"Documents with metadata: {docs_with_metadata}")
-        print(f"Documents without metadata: {docs_without_metadata}")
-        print(f"Total documents loaded: {len(self.documents)}")
+        # Print summary statistics
+        log_print("\n=== Loading Summary ===")
+        log_print(f"Documents with metadata: {docs_with_metadata}")
+        log_print(f"Documents without metadata: {docs_without_metadata}")
+        log_print(f"Total documents loaded: {len(self.documents)}")
+        if len(self.documents) > 0:
+            metadata_rate = (docs_with_metadata / len(self.documents)) * 100
+            log_print(f"Metadata match rate: {metadata_rate:.2f}%")
 
+        log_print(f"\nDetailed debug log written to: {log_file}")
         return self.documents
 
+
     def generate_embeddings(self, documents: List[Document], batch_size: int = 1000) -> None:
-        """Generate embeddings with proper metadata handling"""
+        """Generate embeddings with proper metadata handling and debugging"""
         if self.vectorstore is None:
             print("Vectorstore not initialized. Call initialize_vectorstore first.")
             raise
@@ -346,6 +429,16 @@ class RAGRetriever:
             total_docs = len(documents)
             print(f"\nProcessing {total_docs} documents in batches of {batch_size}")
             ds = self.vectorstore.vectorstore.dataset
+
+            # Set up logging
+            log_dir = 'logs'
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, f'embedding_generation_{datetime.now().strftime("%Y%m%d_%H%M%S")}.txt')
+
+            def log_print(message):
+                print(message)
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(message + '\n')
 
             # Process documents in batches
             for batch_start in range(0, total_docs, batch_size):
@@ -369,7 +462,12 @@ class RAGRetriever:
                             if hasattr(self, 'credential_manager'):
                                 self.embeddings.client = self.credential_manager.get_bedrock_client()
 
-                            print(f"Processing document {batch_start + i + 1}/{total_docs}")
+                            log_print(f"Processing document {batch_start + i + 1}/{total_docs}")
+
+                            # Debug print metadata for first doc in batch
+                            if i == 0:
+                                log_print("\nFirst document metadata:")
+                                log_print(json.dumps(doc.metadata, indent=2))
 
                             # Generate embedding
                             embedding = self.embeddings.embed_query(doc.page_content)
@@ -402,25 +500,27 @@ class RAGRetriever:
 
                                 tensor_data[field].append(value)
 
-                            # Debug print for first document in batch
-                            if i == 0:
-                                print("\nSample metadata being stored:")
-                                print("Document metadata:", doc.metadata)
-                                print("Tensor data sample:")
-                                for field, values in tensor_data.items():
-                                    if values:
-                                        print(f"{field}: {values[-1]}")
+                                # Debug print for first document's tensor values
+                                if i == 0:
+                                    log_print(f"Field {field} value: {value}")
 
                             i += 1
 
                         except Exception as e:
-                            print(f"Error processing document {batch_start + i + 1}: {e}")
+                            log_print(f"Error processing document {batch_start + i + 1}: {e}")
                             i += 1
                             continue
 
                     # Add batch to dataset
                     if texts:
                         try:
+                            # Debug print before adding to dataset
+                            log_print("\nTensor data about to be added:")
+                            for field, values in tensor_data.items():
+                                if values:
+                                    log_print(f"{field} (first value): {values[0]}")
+                                    log_print(f"{field} length: {len(values)}")
+
                             with ds:
                                 # Extend core tensors
                                 ds.text.extend(texts)
@@ -429,20 +529,35 @@ class RAGRetriever:
 
                                 # Extend metadata tensors
                                 for field, values in tensor_data.items():
+                                    log_print(f"\nExtending tensor {field}")
+                                    log_print(f"Values length: {len(values)}")
+                                    if values:
+                                        log_print(f"Sample value: {values[0]}")
                                     tensor = getattr(ds, field)
                                     tensor.extend(values)
 
-                            print(f"Successfully added batch of {len(texts)} documents")
+                            # Debug print after adding to dataset
+                            log_print("\nVerifying stored data:")
+                            last_idx = len(ds.text) - 1
+                            for field in tensor_data.keys():
+                                try:
+                                    stored_value = ds[field][last_idx].numpy()
+                                    log_print(f"Stored {field}: {stored_value}")
+                                except Exception as e:
+                                    log_print(f"Error checking {field}: {e}")
+
+                            log_print(f"Successfully added batch of {len(texts)} documents")
 
                         except Exception as e:
-                            print(f"Error adding batch to dataset: {e}")
+                            log_print(f"Error adding batch to dataset: {e}")
                             raise
 
                 except Exception as e:
-                    print(f"Error processing batch: {str(e)}")
+                    log_print(f"Error processing batch: {str(e)}")
                     raise
 
-            print(f"\nCompleted processing {total_docs} documents")
+            log_print(f"\nCompleted processing {total_docs} documents")
+            log_print(f"Debug log written to: {log_file}")
 
         except Exception as e:
             print(f"Error in batch processing: {e}")
