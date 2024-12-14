@@ -265,66 +265,101 @@ class retriever():
             return {}
 
     def search_vector_store(self, embeddor, query, vectorstore, top_k):
+        """Modified search method with detailed metadata debugging"""
         # Access the underlying dataset
         ds = vectorstore.vectorstore.dataset
+        print("\n=== VECTOR STORE DEBUG ===")
+        print(f"Query: {query}")
+        print(f"Available tensors: {list(ds.tensors.keys())}")
 
         # Get dataset size and validate
         dataset_size = len(ds.embedding)
-        if dataset_size == 0:
-            print("Dataset is empty. Ensure embeddings are correctly added to the vectorstore.")
+        print(f"Dataset size: {dataset_size}")
 
-        # Generate query embedding
+        # Generate query embedding and get similarities
         query_embedding = embeddor.embed_query(query)
+        embeddor_numpy = ds.embedding.numpy()
+        if len(embeddor_numpy.shape) == 3:
+            embeddor_numpy = embeddor_numpy.squeeze(1)
 
-        # Convert embeddings to numpy array safely
-        try:
-            embeddor_numpy = ds.embedding.numpy()
-            if len(embeddor_numpy.shape) == 3:
-                embeddor_numpy = embeddor_numpy.squeeze(1)
-        except Exception as e:
-            print(f"Error accessing embeddings: {e}")
-            return []
+        similarities = np.dot(embeddor_numpy, query_embedding) / (
+                np.linalg.norm(embeddor_numpy, axis=1) * np.linalg.norm(query_embedding))
 
-        # Calculate similarities
-        similarities = np.dot(embeddor_numpy, query_embedding) / (np.linalg.norm(embeddor_numpy, axis=1) * np.linalg.norm(query_embedding))
-
-        # Get top k indices with bounds checking
-        top_k = min(top_k, dataset_size)  # Ensure we don't request more than available
+        # Get top k indices
+        top_k = min(top_k, dataset_size)
         top_indices = np.argsort(similarities)[-top_k:][::-1]
-
-        # Validate indices
         valid_indices = [idx for idx in top_indices if 0 <= idx < dataset_size]
+
+        print(f"\nProcessing top {len(valid_indices)} results")
 
         # Process results
         processed_results = []
         for idx in valid_indices:
             try:
-                # Safely access dataset tensors
-                text_array = ds.text[int(idx)].numpy()  # Ensure integer index
-                metadata_array = ds.metadata[int(idx)].numpy()
+                print(f"\n--- Processing Result {idx} ---")
 
-                # Convert text and create document
-                text_str = self.convert_to_string(text_array)
-                if not text_str:
-                    continue
+                # Debug raw tensor values
+                print("Raw tensor values:")
+                for tensor_name in ds.tensors.keys():
+                    if tensor_name not in ['text', 'embedding']:
+                        try:
+                            value = ds[tensor_name][int(idx)].numpy()
+                            print(f"{tensor_name}: {value}")
+                        except Exception as e:
+                            print(f"Error accessing tensor {tensor_name}: {e}")
 
-                metadata_dict = self.parse_metadata(metadata_array)
+                # Get metadata
+                try:
+                    metadata_array = ds.metadata[int(idx)].numpy()
+                    print(f"\nRaw metadata array: {metadata_array}")
+                    metadata_dict = self.parse_metadata(metadata_array)
+                    print(f"Parsed metadata: {json.dumps(metadata_dict, indent=2)}")
+                except Exception as e:
+                    print(f"Error processing metadata: {e}")
+                    metadata_dict = {}
+
+                # Process individual tensor fields
+                print("\nProcessing individual tensors:")
+                for tensor_name in ds.tensors.keys():
+                    if tensor_name not in ['text', 'embedding', 'metadata', 'id']:
+                        try:
+                            tensor_value = ds[tensor_name][int(idx)].numpy()
+                            if tensor_value.size > 0:
+                                value = tensor_value.item() if tensor_value.size == 1 else tensor_value[0]
+                                if value and str(value).strip():
+                                    metadata_dict[tensor_name] = value
+                                    print(f"Added {tensor_name}: {value}")
+                        except Exception as e:
+                            print(f"Error processing tensor {tensor_name}: {e}")
+
+                # Add similarity score
                 metadata_dict['similarity_score'] = float(similarities[idx])
                 metadata_dict['dataset_index'] = int(idx)
 
+                # Get text content
+                text_array = ds.text[int(idx)].numpy()
+                text_str = text_array.item() if text_array.size == 1 else text_array[0]
+
+                if not text_str:
+                    print("Empty text content, skipping document")
+                    continue
+
+                # Create document
                 doc = Document(
                     page_content=str(text_str),
                     metadata=metadata_dict
                 )
                 processed_results.append(doc)
 
-            except IndexError as e:
-                print(f"Index {idx} out of bounds: {e}")
-                continue
+                # Debug final document
+                print("\nFinal document metadata:")
+                print(json.dumps(doc.metadata, indent=2))
+
             except Exception as e:
                 print(f"Error processing result at index {idx}: {e}")
                 continue
 
+        print(f"\nTotal results processed: {len(processed_results)}")
         return processed_results
 
     def get_vector_store(self, vstore_name, bedrock_client):
